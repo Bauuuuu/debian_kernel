@@ -2056,7 +2056,7 @@ vop_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode,
 	int request_clock = mode->clock;
 	int clock;
 
-	if (mode->clock >= 594000 || mode->clock <= 27500)
+	if (mode->clock >= 300000 || mode->clock <= 27500)
 		return MODE_CLOCK_RANGE;
 
 	if (mode->hdisplay > vop_data->max_output.width)
@@ -2113,7 +2113,7 @@ static size_t vop_plane_line_bandwidth(struct drm_plane_state *pstate)
 	int vskiplines = scl_get_vskiplines(src_height, dest_height);
 	size_t bandwidth;
 
-	if (!src_width || !src_height || !dest_width || !dest_height)
+	if (src_width <= 0 || src_height <= 0 || dest_width <= 0 || dest_height <= 0)
 		return 0;
 
 	bandwidth = src_width * bpp / 8;
