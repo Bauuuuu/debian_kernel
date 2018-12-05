@@ -1,6 +1,7 @@
 # Overlays for the Tinker board platform
 
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
+	es90x8q2m-dac.dtbo \
 	hifiberry-amp.dtbo \
 	hifiberry-dac.dtbo \
 	hifiberry-dacplus.dtbo \
@@ -11,6 +12,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	iqaudio-digi-wm8804-audio.dtbo \
 	justboom-dac.dtbo \
 	justboom-digi.dtbo \
+	seeed-2mic-voicecard.dtbo \
 	waveshare35a-tinker.dtbo \
 	waveshare32b-tinker.dtbo \
 	pps-gpio.dtbo \
@@ -22,6 +24,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	mcp2515-can0.dtbo \
 	googlevoicehat-soundcard.dtbo \
 	ads7846-tinker.dtbo \
+	camera-ov5647.dtbo
 
 targets += dtbs dtbs_install
 targets += $(dtbo-y)

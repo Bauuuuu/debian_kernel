@@ -578,7 +578,6 @@ static inline unsigned int muldiv32(unsigned int a, unsigned int b,
 {
 	u_int64_t n = (u_int64_t) a * b;
 	if (c == 0) {
-		snd_BUG_ON(!n);
 		*r = 0;
 		return UINT_MAX;
 	}
@@ -1664,7 +1663,7 @@ int snd_pcm_hw_param_first(struct snd_pcm_substream *pcm,
 		return changed;
 	if (params->rmask) {
 		int err = snd_pcm_hw_refine(pcm, params);
-		if (snd_BUG_ON(err < 0))
+		if (err < 0)
 			return err;
 	}
 	return snd_pcm_hw_param_value(params, var, dir);
@@ -1711,7 +1710,7 @@ int snd_pcm_hw_param_last(struct snd_pcm_substream *pcm,
 		return changed;
 	if (params->rmask) {
 		int err = snd_pcm_hw_refine(pcm, params);
-		if (snd_BUG_ON(err < 0))
+		if (err < 0)
 			return err;
 	}
 	return snd_pcm_hw_param_value(params, var, dir);
@@ -2350,6 +2349,32 @@ snd_pcm_sframes_t snd_pcm_lib_read(struct snd_pcm_substream *substream, void __u
 	nonblock = !!(substream->f_flags & O_NONBLOCK);
 	if (runtime->access != SNDRV_PCM_ACCESS_RW_INTERLEAVED)
 		return -EINVAL;
+#ifdef CONFIG_SND_SOC_ROCKCHIP_VAD
+	if (snd_pcm_vad_attached(substream)) {
+		snd_pcm_stream_lock_irq(substream);
+		switch (runtime->status->state) {
+		case SNDRV_PCM_STATE_PREPARED:
+			if (size >= runtime->start_threshold) {
+				err = snd_pcm_start(substream);
+				if (err < 0) {
+					snd_pcm_stream_unlock_irq(substream);
+					return err;
+				}
+			}
+			break;
+		default:
+			break;
+		}
+		snd_pcm_stream_unlock_irq(substream);
+
+		if (snd_pcm_vad_avail(substream))
+			return snd_pcm_vad_read(substream, buf, size);
+		else
+			return snd_pcm_lib_read1(substream, (unsigned long)buf,
+						 size, nonblock,
+						 snd_pcm_lib_read_transfer);
+	}
+#endif
 	return snd_pcm_lib_read1(substream, (unsigned long)buf, size, nonblock, snd_pcm_lib_read_transfer);
 }
 

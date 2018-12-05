@@ -29,6 +29,9 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/thermal.h>
+#ifdef CONFIG_ARCH_ROCKCHIP
+#include <soc/rockchip/rockchip_opp_select.h>
+#endif
 
 #define MAX_PROP_NAME_LEN	6
 #define VERSION_ELEMENTS	1
@@ -256,7 +259,7 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 	unsigned long cur_freq;
 	bool opp_v1 = false;
 	const char *name;
-	int ret;
+	int ret, scale;
 	static int check_init;
 
 	cpu_dev = get_cpu_device(policy->cpu);
@@ -327,6 +330,8 @@ static int cpufreq_init(struct cpufreq_policy *policy)
 				dev_pm_opp_of_remove_table(cpu_dev);
 		}
 	}
+	scale = rockchip_cpufreq_get_scale(policy->cpu);
+	rockchip_adjust_power_scale(cpu_dev, scale);
 
 	/*
 	 * But we need OPP table to function so if it is not there let's

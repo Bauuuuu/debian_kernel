@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PLAT_BOARD_H
 #define __PLAT_BOARD_H
 
@@ -72,6 +73,7 @@ enum {
     WIFI_RTL8812AU,
     WIFI_RTL_SERIES,
     WIFI_ESP8089,
+    WIFI_MVL88W8977,
     TYPE_MAX,
 };
 
@@ -81,6 +83,7 @@ int rockchip_wifi_ref_voltage(int on);
 int rockchip_wifi_power(int on);
 int rockchip_wifi_set_carddetect(int val);
 int rockchip_wifi_get_oob_irq(void);
+int rockchip_wifi_get_oob_irq_flag(void);
 int rockchip_wifi_reset(int on);
 int rockchip_wifi_mac_addr(unsigned char *buf);
 void *rockchip_wifi_country_code(char *ccode);

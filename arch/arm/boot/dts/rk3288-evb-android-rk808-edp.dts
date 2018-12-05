@@ -68,21 +68,28 @@
 
 	/delete-node/ sdmmc-regulator;
 
-	vdd_log: vdd-center {
+	vdd_log: vdd-logic {
 		compatible = "pwm-regulator";
 		rockchip,pwm_id = <1>;
 		rockchip,pwm_voltage = <1100000>;
 		pwms = <&pwm1 0 25000 1>;
 		regulator-name = "vcc_log";
-		regulator-min-microvolt = <800000>;
-		regulator-max-microvolt = <1400000>;
+		regulator-min-microvolt = <860000>;
+		regulator-max-microvolt = <1360000>;
 		regulator-always-on;
 		regulator-boot-on;
+	};
+
+	xin32k: xin32k {
+		compatible = "fixed-clock";
+		clock-frequency = <32768>;
+		clock-output-names = "xin32k";
+		#clock-cells = <0>;
 	};
 };
 
 &cpu0 {
-	cpu0-supply = <&vdd_cpu>;
+	cpu-supply = <&vdd_cpu>;
 };
 
 &cif_isp0 {
@@ -104,6 +111,7 @@
 
 &edp_panel {
 	compatible ="lg,lp079qx1-sp0v", "simple-panel";
+	backlight = <&backlight>;
 	enable-gpios = <&gpio7 4 GPIO_ACTIVE_HIGH>;
 	enable-delay-ms = <120>;
 	pinctrl-0 = <&lcd_cs>;
@@ -144,6 +152,10 @@
 	mali-supply = <&vdd_gpu>;
 };
 
+&gmac {
+	max-speed = <1000>;
+};
+
 &hdmi_analog_sound {
 	status = "okay";
 };
@@ -161,7 +173,7 @@
 		rockchip,system-power-controller;
 		wakeup-source;
 		#clock-cells = <1>;
-		clock-output-names = "xin32k", "rk808-clkout2";
+		clock-output-names = "rk808-clkout1", "rk808-clkout2";
 
 		vcc1-supply = <&vcc_sys>;
 		vcc2-supply = <&vcc_sys>;
@@ -236,7 +248,8 @@
 				regulator-max-microvolt = <3300000>;
 				regulator-name = "vcca_codec";
 				regulator-state-mem {
-					regulator-off-in-suspend;
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <3300000>;
 				};
 			};
 
@@ -256,10 +269,10 @@
 				regulator-always-on;
 				regulator-boot-on;
 				regulator-min-microvolt = <1800000>;
-				regulator-max-microvolt = <3300000>;
+				regulator-max-microvolt = <1800000>;
 				regulator-name = "vcc_wl";
 				regulator-state-mem {
-					regulator-off-in-suspend;
+					regulator-on-in-suspend;
 				};
 			};
 
@@ -270,8 +283,7 @@
 				regulator-max-microvolt = <3300000>;
 				regulator-name = "vccio_sd";
 				regulator-state-mem {
-					regulator-on-in-suspend;
-					regulator-suspend-microvolt = <3300000>;
+					regulator-off-in-suspend;
 				};
 			};
 
@@ -316,7 +328,7 @@
 				regulator-max-microvolt = <3300000>;
 				regulator-name = "vcc_sd";
 				regulator-state-mem {
-					regulator-on-in-suspend;
+					regulator-off-in-suspend;
 				};
 			};
 
@@ -367,9 +379,9 @@
 		mpu-level_shifter = <0>;
 		mpu-orientation = <0 1 0 1 0 0 0 0 1>;
 		orientation-x= <0>;
-		orientation-y= <1>;
-		orientation-z= <0>;
-		support-hw-poweroff = <1>;
+		orientation-y= <0>;
+		orientation-z= <1>;
+		support-hw-poweroff = <0>;
 		mpu-debug = <1>;
 	};
 
@@ -407,10 +419,17 @@
 
 &rockchip_suspend {
 	status = "okay";
+	rockchip,pwm-regulator-config = <
+	(0
+	| PWM1_REGULATOR_EN
+	)
+	>;
 };
 
 &pwm1 {
 	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm1_pin_pull_down>;
 };
 
 &pinctrl {

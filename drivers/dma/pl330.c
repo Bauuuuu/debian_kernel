@@ -447,6 +447,10 @@ struct dma_pl330_chan {
 	int burst_len; /* the number of burst */
 	dma_addr_t fifo_addr;
 
+	/* interlace size */
+	unsigned int src_interlace_size;
+	unsigned int dst_interlace_size;
+
 	/* for runtime pm tracking */
 	bool active;
 };
@@ -536,6 +540,9 @@ struct dma_pl330_desc {
 	/* For cyclic capability */
 	bool cyclic;
 	size_t num_periods;
+	/* interlace size */
+	unsigned int src_interlace_size;
+	unsigned int dst_interlace_size;
 };
 
 struct _xfer_spec {
@@ -1169,10 +1176,24 @@ static inline int _ldst_devtomem(struct pl330_dmac *pl330, unsigned dry_run,
 		off += _emit_WFP(dry_run, &buf[off], cond, pxs->desc->peri);
 		off += _emit_LDP(dry_run, &buf[off], cond, pxs->desc->peri);
 		off += _emit_ST(dry_run, &buf[off], ALWAYS);
+#ifdef CONFIG_ARCH_ROCKCHIP
+		/*
+		 * Make suree dma has finish transmission, or later flush may
+		 * cause dma second transmission,and fifo is overrun.
+		 */
+		off += _emit_WMB(dry_run, &buf[off]);
+		off += _emit_NOP(dry_run, &buf[off]);
+		off += _emit_WMB(dry_run, &buf[off]);
+		off += _emit_NOP(dry_run, &buf[off]);
+#endif
 
 		if (!(pl330->quirks & PL330_QUIRK_BROKEN_NO_FLUSHP))
 			off += _emit_FLUSHP(dry_run, &buf[off],
 					    pxs->desc->peri);
+		if (pxs->desc->dst_interlace_size) {
+			off += _emit_ADDH(dry_run, &buf[off], DST,
+					  pxs->desc->dst_interlace_size);
+		}
 	}
 
 	return off;
@@ -1189,10 +1210,23 @@ static inline int _ldst_memtodev(struct pl330_dmac *pl330,
 		off += _emit_WFP(dry_run, &buf[off], cond, pxs->desc->peri);
 		off += _emit_LD(dry_run, &buf[off], ALWAYS);
 		off += _emit_STP(dry_run, &buf[off], cond, pxs->desc->peri);
+#ifdef CONFIG_ARCH_ROCKCHIP
+		/*
+		 * Make suree dma has finish transmission, or later flush may
+		 * cause dma second transmission,and fifo is overrun.
+		 */
+		off += _emit_WMB(dry_run, &buf[off]);
+		off += _emit_NOP(dry_run, &buf[off]);
+		off += _emit_WMB(dry_run, &buf[off]);
+		off += _emit_NOP(dry_run, &buf[off]);
+#endif
 
 		if (!(pl330->quirks & PL330_QUIRK_BROKEN_NO_FLUSHP))
 			off += _emit_FLUSHP(dry_run, &buf[off],
 					    pxs->desc->peri);
+		if (pxs->desc->src_interlace_size)
+			off += _emit_ADDH(dry_run, &buf[off], SRC,
+					  pxs->desc->src_interlace_size);
 	}
 
 	return off;
@@ -1327,7 +1361,11 @@ static inline int _loop_cyclic(struct pl330_dmac *pl330, unsigned dry_run,
 	/* forever loop */
 	off += _emit_MOV(dry_run, &buf[off], SAR, x->src_addr);
 	off += _emit_MOV(dry_run, &buf[off], DAR, x->dst_addr);
-
+#ifdef CONFIG_ARCH_ROCKCHIP
+	if (!(pl330->quirks & PL330_QUIRK_BROKEN_NO_FLUSHP))
+		off += _emit_FLUSHP(dry_run, &buf[off],
+					pxs->desc->peri);
+#endif
 	/* loop0 */
 	off += _emit_LP(dry_run, &buf[off], 0,  lcnt0);
 	ljmp0 = off;
@@ -1356,7 +1394,9 @@ static inline int _loop_cyclic(struct pl330_dmac *pl330, unsigned dry_run,
 		off += _emit_LPEND(dry_run, &buf[off], &lpend);
 	}
 
-	if (pl330->peripherals_req_type == BURST) {
+	if (pxs->desc->src_interlace_size == 0 &&
+	    pxs->desc->dst_interlace_size == 0 &&
+	    pl330->peripherals_req_type == BURST) {
 		unsigned int ccr = pxs->ccr;
 		unsigned long c = 0;
 
@@ -1403,7 +1443,11 @@ static inline int _setup_loops(struct pl330_dmac *pl330,
 	u32 ccr = pxs->ccr;
 	unsigned long c, bursts = BYTE_TO_BURST(x->bytes, ccr);
 	int off = 0;
-
+#ifdef CONFIG_ARCH_ROCKCHIP
+	if (!(pl330->quirks & PL330_QUIRK_BROKEN_NO_FLUSHP))
+		off += _emit_FLUSHP(dry_run, &buf[off],
+					pxs->desc->peri);
+#endif
 	while (bursts) {
 		c = bursts;
 		off += _loop(pl330, dry_run, &buf[off], &c, pxs);
@@ -1453,6 +1497,12 @@ static inline int _setup_xfer_cyclic(struct pl330_dmac *pl330, unsigned dry_run,
 	unsigned long bursts = BYTE_TO_BURST(x->bytes, ccr);
 	int off = 0;
 
+	if (pxs->desc->rqtype == DMA_DEV_TO_MEM)
+		bursts = x->bytes / (BRST_SIZE(ccr) * BRST_LEN(ccr)
+			+ pxs->desc->dst_interlace_size);
+	else if (pxs->desc->rqtype == DMA_MEM_TO_DEV)
+		bursts = x->bytes / (BRST_SIZE(ccr) * BRST_LEN(ccr)
+			+ pxs->desc->src_interlace_size);
 	/* Setup Loop(s) */
 	off += _loop_cyclic(pl330, dry_run, &buf[off], bursts, pxs, ev);
 
@@ -1757,16 +1807,17 @@ static int pl330_update(struct pl330_dmac *pl330)
 
 			/* Detach the req */
 			descdone = thrd->req[active].desc;
+			if (descdone) {
+				if (!descdone->cyclic) {
+					thrd->req[active].desc = NULL;
+					thrd->req_running = -1;
+					/* Get going again ASAP */
+					_start(thrd);
+				}
 
-			if (!descdone->cyclic) {
-				thrd->req[active].desc = NULL;
-				thrd->req_running = -1;
-				/* Get going again ASAP */
-				_start(thrd);
+				/* For now, just make a list of callbacks to be done */
+				list_add_tail(&descdone->rqd, &pl330->req_done);
 			}
-
-			/* For now, just make a list of callbacks to be done */
-			list_add_tail(&descdone->rqd, &pl330->req_done);
 		}
 	}
 
@@ -1817,15 +1868,12 @@ static bool _chan_ns(const struct pl330_dmac *pl330, int i)
 static struct pl330_thread *pl330_request_channel(struct pl330_dmac *pl330)
 {
 	struct pl330_thread *thrd = NULL;
-	unsigned long flags;
 	int chans, i;
 
 	if (pl330->state == DYING)
 		return NULL;
 
 	chans = pl330->pcfg.num_chan;
-
-	spin_lock_irqsave(&pl330->lock, flags);
 
 	for (i = 0; i < chans; i++) {
 		thrd = &pl330->channels[i];
@@ -1844,8 +1892,6 @@ static struct pl330_thread *pl330_request_channel(struct pl330_dmac *pl330)
 		thrd = NULL;
 	}
 
-	spin_unlock_irqrestore(&pl330->lock, flags);
-
 	return thrd;
 }
 
@@ -1863,7 +1909,6 @@ static inline void _free_event(struct pl330_thread *thrd, int ev)
 static void pl330_release_channel(struct pl330_thread *thrd)
 {
 	struct pl330_dmac *pl330;
-	unsigned long flags;
 
 	if (!thrd || thrd->free)
 		return;
@@ -1875,10 +1920,8 @@ static void pl330_release_channel(struct pl330_thread *thrd)
 
 	pl330 = thrd->dmac;
 
-	spin_lock_irqsave(&pl330->lock, flags);
 	_free_event(thrd, thrd->ev);
 	thrd->free = true;
-	spin_unlock_irqrestore(&pl330->lock, flags);
 }
 
 /* Initialize the structure for PL330 configuration, that can be used
@@ -2248,19 +2291,19 @@ static int pl330_alloc_chan_resources(struct dma_chan *chan)
 	struct pl330_dmac *pl330 = pch->dmac;
 	unsigned long flags;
 
-	spin_lock_irqsave(&pch->lock, flags);
+	spin_lock_irqsave(&pl330->lock, flags);
 
 	dma_cookie_init(chan);
 
 	pch->thread = pl330_request_channel(pl330);
 	if (!pch->thread) {
-		spin_unlock_irqrestore(&pch->lock, flags);
+		spin_unlock_irqrestore(&pl330->lock, flags);
 		return -ENOMEM;
 	}
 
 	tasklet_init(&pch->task, pl330_tasklet, (unsigned long) pch);
 
-	spin_unlock_irqrestore(&pch->lock, flags);
+	spin_unlock_irqrestore(&pl330->lock, flags);
 
 	return 1;
 }
@@ -2277,6 +2320,8 @@ static int pl330_config(struct dma_chan *chan,
 			pch->burst_sz = __ffs(slave_config->dst_addr_width);
 		if (slave_config->dst_maxburst)
 			pch->burst_len = slave_config->dst_maxburst;
+		if (slave_config->src_interlace_size)
+			pch->src_interlace_size = slave_config->src_interlace_size;
 	} else if (slave_config->direction == DMA_DEV_TO_MEM) {
 		if (slave_config->src_addr)
 			pch->fifo_addr = slave_config->src_addr;
@@ -2284,6 +2329,8 @@ static int pl330_config(struct dma_chan *chan,
 			pch->burst_sz = __ffs(slave_config->src_addr_width);
 		if (slave_config->src_maxburst)
 			pch->burst_len = slave_config->src_maxburst;
+		if (slave_config->dst_interlace_size)
+			pch->dst_interlace_size = slave_config->dst_interlace_size;
 	}
 
 	return 0;
@@ -2363,19 +2410,20 @@ static int pl330_pause(struct dma_chan *chan)
 static void pl330_free_chan_resources(struct dma_chan *chan)
 {
 	struct dma_pl330_chan *pch = to_pchan(chan);
+	struct pl330_dmac *pl330 = pch->dmac;
 	unsigned long flags;
 
 	tasklet_kill(&pch->task);
 
 	pm_runtime_get_sync(pch->dmac->ddma.dev);
-	spin_lock_irqsave(&pch->lock, flags);
+	spin_lock_irqsave(&pl330->lock, flags);
 
 	pl330_release_channel(pch->thread);
 	pch->thread = NULL;
 
 	list_splice_tail_init(&pch->work_list, &pch->dmac->desc_pool);
 
-	spin_unlock_irqrestore(&pch->lock, flags);
+	spin_unlock_irqrestore(&pl330->lock, flags);
 	pm_runtime_mark_last_busy(pch->dmac->ddma.dev);
 	pm_runtime_put_autosuspend(pch->dmac->ddma.dev);
 }
@@ -2725,7 +2773,8 @@ static struct dma_async_tx_descriptor *pl330_prep_dma_cyclic(
 	desc->cyclic = true;
 	desc->num_periods = len / period_len;
 	desc->txd.flags = flags;
-
+	desc->src_interlace_size = pch->src_interlace_size;
+	desc->dst_interlace_size = pch->dst_interlace_size;
 	return &desc->txd;
 }
 
@@ -2862,6 +2911,8 @@ pl330_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
 
 		desc->rqtype = direction;
 		desc->bytes_requested = sg_dma_len(sg);
+		desc->src_interlace_size = pch->src_interlace_size;
+		desc->dst_interlace_size = pch->dst_interlace_size;
 	}
 
 	/* Return the last desc in the chain */

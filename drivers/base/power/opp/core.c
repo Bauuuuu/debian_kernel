@@ -771,10 +771,7 @@ int dev_pm_opp_check_initial_rate(struct device *dev, unsigned long *cur_freq)
 	dev_dbg(dev, "%lu Hz %d uV --> %lu Hz %lu uV\n", old_freq, old_volt,
 		target_freq, u_volt);
 
-	if (old_freq == target_freq && old_volt == u_volt)
-		return 0;
-
-	if (old_freq == target_freq && old_volt != u_volt) {
+	if (old_freq == target_freq) {
 		ret = _set_opp_voltage(dev, reg, u_volt, u_volt_min,
 				       u_volt_max);
 		if (ret) {
@@ -1700,7 +1697,7 @@ static int _opp_add_static_v2(struct device *dev, struct device_node *np)
 
 	/* Check if the OPP supports hardware's hierarchy of versions or not */
 	if (!_opp_is_supported(dev, opp_table, np)) {
-		dev_dbg(dev, "OPP not supported by hardware: %llu\n", rate);
+		dev_err(dev, "OPP not supported by hardware: %llu\n", rate);
 		goto free_opp;
 	}
 

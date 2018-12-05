@@ -190,6 +190,19 @@
 		rockchip,pwm_id= <2>;
 		rockchip,pwm_voltage = <1000000>;
 	};
+
+	xin32k: xin32k {
+		compatible = "fixed-clock";
+		clock-frequency = <32768>;
+		clock-output-names = "xin32k";
+		#clock-cells = <0>;
+	};
+};
+
+&cdn_dp {
+	status = "okay";
+	extcon = <&fusb0>;
+	phys = <&tcphy0_dp>;
 };
 
 &cpu_l0 {
@@ -299,7 +312,7 @@
 		rockchip,system-power-controller;
 		wakeup-source;
 		#clock-cells = <1>;
-		clock-output-names = "xin32k", "rk808-clkout2";
+		clock-output-names = "rk808-clkout1", "rk808-clkout2";
 
 		vcc1-supply = <&vcc3v3_sys>;
 		vcc2-supply = <&vcc3v3_sys>;
@@ -516,7 +529,7 @@
 };
 
 &pcie0 {
-	ep-gpios = <&gpio3 13 GPIO_ACTIVE_HIGH>;
+	ep-gpios = <&gpio2 RK_PA4 GPIO_ACTIVE_HIGH>;
 	num-lanes = <4>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie_clkreqn>;
@@ -534,6 +547,8 @@
 
 &pwm2 {
 	status = "okay";
+	pinctrl-names = "active";
+	pinctrl-0 = <&pwm2_pin_pull_down>;
 };
 
 &sdhci {

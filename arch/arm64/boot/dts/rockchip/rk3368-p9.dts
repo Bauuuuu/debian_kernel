@@ -202,6 +202,13 @@
 		regulator-name = "vcc_host";
 		regulator-always-on;
 	};
+
+	xin32k: xin32k {
+		compatible = "fixed-clock";
+		clock-frequency = <32768>;
+		clock-output-names = "xin32k";
+		#clock-cells = <0>;
+	};
 };
 
 &cpu_l0 {
@@ -285,7 +292,7 @@
 	num-slots = <1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_cd &sdmmc_bus4>;
-	status = "okay";
+	status = "disabled";
 };
 
 &sdio0 {
@@ -334,7 +341,7 @@
 		compatible = "rockchip,rk818";
 		status = "okay";
 		reg = <0x1c>;
-		clock-output-names = "xin32k", "wifibt_32kin";
+		clock-output-names = "rk818-clkout1", "wifibt_32kin";
 		interrupt-parent = <&gpio0>;
 		interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
 		pinctrl-names = "default";
@@ -529,6 +536,15 @@
 
 			otg_switch: OTG_SWITCH {
 				regulator-name = "otg_switch";
+			};
+
+			hdmi_switch: HDMI_SWITCH {
+				regulator-always-on;
+				regulator-boot-on;
+				regulator-name = "hdmi_switch";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
 			};
 		};
 

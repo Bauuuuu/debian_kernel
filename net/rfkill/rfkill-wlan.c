@@ -93,6 +93,8 @@ static const char wlan_name[] =
 		"ap6476"
 #elif defined(CONFIG_AP6493)
 		"ap6493"
+#elif defined(CONFIG_MVL88W8977)
+        "mvl88w8977"
 #else
         "wlan_default"
 #endif
@@ -154,6 +156,8 @@ int get_wifi_chip_type(void)
         type = WIFI_RTL8812AU;                        
     } else if (strcmp(wifi_chip_type_string, "esp8089") == 0) {
         type = WIFI_ESP8089;
+    } else if (strcmp(wifi_chip_type_string, "mvl88w8977") == 0) {
+        type = WIFI_MVL88W8977;
     } else {
         type = WIFI_AP6210;
     }
@@ -432,6 +436,22 @@ int rockchip_wifi_get_oob_irq(void)
 }
 EXPORT_SYMBOL(rockchip_wifi_get_oob_irq);
 
+int rockchip_wifi_get_oob_irq_flag(void)
+{
+	struct rfkill_wlan_data *mrfkill = g_rfkill;
+	struct rksdmmc_gpio *wifi_int_irq;
+	int gpio_flags = -1;
+
+	if (mrfkill) {
+		wifi_int_irq = &mrfkill->pdata->wifi_int_b;
+		if (gpio_is_valid(wifi_int_irq->io))
+			gpio_flags = wifi_int_irq->enable;
+	}
+
+	return gpio_flags;
+}
+EXPORT_SYMBOL(rockchip_wifi_get_oob_irq_flag);
+
 /**************************************************************************
  *
  * Wifi Reset Func
@@ -652,7 +672,7 @@ static int wlan_platdata_parse_dt(struct device *dev,
         gpio = of_get_named_gpio_flags(node, "WIFI,host_wake_irq", 0, &flags);
         if (gpio_is_valid(gpio)){
 			data->wifi_int_b.io = gpio;
-			data->wifi_int_b.enable = flags;
+			data->wifi_int_b.enable = !flags;
 			LOG("%s: get property: WIFI,host_wake_irq = %d, flags = %d.\n", __func__, gpio, flags);
         } else data->wifi_int_b.io = -1;
 	}

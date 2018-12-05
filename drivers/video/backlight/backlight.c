@@ -159,6 +159,7 @@ static ssize_t bl_power_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RW(bl_power);
 
+#ifndef CONFIG_TINKER_MCU
 static ssize_t brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -206,6 +207,32 @@ static ssize_t brightness_store(struct device *dev,
 
 	return rc ? rc : count;
 }
+#else
+extern int tinker_mcu_set_bright(int bright);
+extern int tinker_mcu_get_brightness(void);
+static ssize_t brightness_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int level;
+
+	level = tinker_mcu_get_brightness();
+
+    return sprintf(buf, "%d\n", level);
+}
+
+static ssize_t brightness_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int value;
+
+	value = simple_strtoul(buf, NULL, 0);
+
+	if((value < 0) || (value > 255)) {
+		pr_err("Invalid value for backlight setting, value = %d\n", value);
+	} else
+		tinker_mcu_set_bright(value);
+
+	return strnlen(buf, count);
+}
+#endif
 static DEVICE_ATTR_RW(brightness);
 
 static ssize_t type_show(struct device *dev, struct device_attribute *attr,
@@ -243,7 +270,7 @@ static ssize_t actual_brightness_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(actual_brightness);
 
-static struct class *backlight_class;
+struct class *backlight_class;
 
 #ifdef CONFIG_PM_SLEEP
 static int backlight_suspend(struct device *dev)
@@ -594,6 +621,7 @@ static int __init backlight_class_init(void)
 
 	backlight_class->dev_groups = bl_device_groups;
 	backlight_class->pm = &backlight_class_dev_pm_ops;
+
 	INIT_LIST_HEAD(&backlight_dev_list);
 	mutex_init(&backlight_dev_list_mutex);
 	BLOCKING_INIT_NOTIFIER_HEAD(&backlight_notifier);

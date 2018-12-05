@@ -22,10 +22,13 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/workqueue.h>
+#include <linux/backlight.h>
 #include "tinker_mcu.h"
 
+#define BL_DEBUG 0
 static struct tinker_mcu_data *g_mcu_data;
 static int connected = 0;
+static int lcd_bright_level = 0;
 
 static int is_hex(char num)
 {
@@ -147,7 +150,7 @@ int tinker_mcu_set_bright(int bright)
 	if (bright > 0xff || bright < 0)
 		return -EINVAL;
 
-	LOG_INFO("bright = 0x%x\n", bright);
+	if(BL_DEBUG) LOG_INFO("set bright = 0x%x\n", bright);
 
 	cmd[0] = 0x86;
 	cmd[1] = bright;
@@ -158,9 +161,49 @@ int tinker_mcu_set_bright(int bright)
 		return ret != 0 ? ret : -ECOMM;
 	}
 
+	lcd_bright_level = bright;
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(tinker_mcu_set_bright);
+
+int tinker_mcu_get_brightness(void)
+{
+	return lcd_bright_level;
+}
+EXPORT_SYMBOL_GPL(tinker_mcu_get_brightness);
+
+static int tinker_mcu_bl_get_brightness(struct backlight_device *bd)
+{
+	return lcd_bright_level;
+}
+
+static const struct backlight_ops tinker_mcu_bl_ops = {
+	.get_brightness	= tinker_mcu_bl_get_brightness,
+};
+
+
+static ssize_t tinker_mcu_bl_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    if(BL_DEBUG) LOG_INFO("get bright = 0x%x\n", lcd_bright_level);
+
+    return sprintf(buf, "%d\n", lcd_bright_level);
+}
+
+static ssize_t tinker_mcu_bl_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int value;
+
+	value = simple_strtoul(buf, NULL, 0);
+
+	if((value < 0) || (value > 255)) {
+		LOG_ERR("Invalid value for backlight setting, value = %d\n", value);
+	} else
+		tinker_mcu_set_bright(value);
+
+	return strnlen(buf, count);
+}
+static DEVICE_ATTR(tinker_mcu_bl, S_IRUGO | S_IWUSR, tinker_mcu_bl_show, tinker_mcu_bl_store);
 
 int tinker_mcu_is_connected(void)
 {
@@ -173,6 +216,8 @@ static int tinker_mcu_probe(struct i2c_client *client,
 {
 	struct tinker_mcu_data *mcu_data;
 	int ret;
+	struct backlight_properties props;
+	struct backlight_device *bl;
 
 	LOG_INFO("address = 0x%x\n", client->addr);
 
@@ -197,6 +242,22 @@ static int tinker_mcu_probe(struct i2c_client *client,
 		goto error;
 	}
 	connected = 1;
+
+	memset(&props, 0, sizeof(props));
+	props.type = BACKLIGHT_RAW;
+	props.max_brightness = 255;
+
+	bl = backlight_device_register("rpi_backlight", NULL, NULL,
+					   &tinker_mcu_bl_ops, &props);
+	if (IS_ERR(bl)) {
+		pr_err("unable to register backlight device\n");
+	}
+
+	ret = device_create_file(&client->dev, &dev_attr_tinker_mcu_bl);
+	if (ret != 0) {
+		dev_err(&client->dev, "Failed to create tinker_mcu_bl sysfs files %d\n", ret);
+		return ret;
+	}
 
 	return 0;
 
