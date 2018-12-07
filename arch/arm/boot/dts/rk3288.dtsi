@@ -103,8 +103,6 @@
 			#cooling-cells = <2>; /* min followed by max */
 			dynamic-power-coefficient = <322>;
 			clocks = <&cru ARMCLK>;
-			nvmem-cells = <&package_info>;
-			nvmem-cell-names = "package_info";
 		};
 		cpu1: cpu@501 {
 			device_type = "cpu";
@@ -162,7 +160,7 @@
 		rockchip,pvtm-error = <1000>;
 		rockchip,pvtm-ref-temp = <35>;
 		rockchip,pvtm-temp-prop = <(-18) (-18)>;
-		rockchip,pvtm-thermal-zone = "soc-thermal";
+		rockchip,thermal-zone = "soc-thermal";
 
 		opp-126000000 {
 			opp-supported-hw = <0x3>;

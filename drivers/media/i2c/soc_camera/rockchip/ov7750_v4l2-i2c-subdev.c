@@ -221,7 +221,9 @@ static struct ov_camera_module_config ov7750_configs[] = {
 		.reg_diff_table = NULL,
 		.reg_diff_table_num_entries = 0,
 		.v_blanking_time_us = 7251,
-		PLTFRM_CAM_ITF_MIPI_CFG(0, 2, 800, 24000000)
+		.max_exp_gain_h = 16,
+		.max_exp_gain_l = 0,
+		PLTFRM_CAM_ITF_MIPI_CFG(0, 1, 800, 24000000)
 	}
 };
 
@@ -250,6 +252,129 @@ static int ov7750_g_VTS(struct ov_camera_module *cam_mod, u32 *vts)
 	return 0;
 err:
 	ov_camera_module_pr_err(cam_mod,
+			"failed with error (%d)\n", ret);
+	return ret;
+}
+
+static int ov7750_auto_adjust_fps(struct ov_camera_module *cam_mod,
+	u32 exp_time)
+{
+	int ret;
+	u32 vts;
+
+	if ((exp_time + ov7750_COARSE_INTG_TIME_MAX_MARGIN)
+		> cam_mod->vts_min)
+		vts = exp_time + ov7750_COARSE_INTG_TIME_MAX_MARGIN;
+	else
+		vts = cam_mod->vts_min;
+	ret = ov_camera_module_write_reg(cam_mod,
+		ov7750_TIMING_VTS_LOW_REG,
+		vts & 0xFF);
+	ret |= ov_camera_module_write_reg(cam_mod,
+		ov7750_TIMING_VTS_HIGH_REG,
+		(vts >> 8) & 0xFF);
+
+	if (IS_ERR_VALUE(ret)) {
+		ov_camera_module_pr_err(cam_mod,
+			"failed with error (%d)\n", ret);
+	} else {
+		ov_camera_module_pr_info(cam_mod,
+			"updated vts = %d,vts_min=%d\n", vts, cam_mod->vts_min);
+		cam_mod->vts_cur = vts;
+	}
+
+	return ret;
+}
+
+static int ov7750_set_vts(struct ov_camera_module *cam_mod,
+	u32 vts)
+{
+	int ret = 0;
+
+	if (vts < cam_mod->vts_min)
+		return ret;
+
+	if (vts > 0xfff)
+		vts = 0xfff;
+
+	ret = ov_camera_module_write_reg(cam_mod,
+		ov7750_TIMING_VTS_LOW_REG,
+		vts & 0xFF);
+	ret |= ov_camera_module_write_reg(cam_mod,
+		ov7750_TIMING_VTS_HIGH_REG,
+		(vts >> 8) & 0xFF);
+
+	if (IS_ERR_VALUE(ret)) {
+		ov_camera_module_pr_err(cam_mod, "failed with error (%d)\n", ret);
+	} else {
+		ov_camera_module_pr_info(cam_mod, "updated vts=%d,vts_min=%d\n", vts, cam_mod->vts_min);
+		cam_mod->vts_cur = vts;
+	}
+	return ret;
+}
+
+static int ov7750_write_aec(struct ov_camera_module *cam_mod)
+{
+	int ret = 0;
+
+	ov_camera_module_pr_debug(cam_mod,
+				  "exp_time = %d, gain = %d, flash_mode = %d\n",
+				  cam_mod->exp_config.exp_time,
+				  cam_mod->exp_config.gain,
+				  cam_mod->exp_config.flash_mode);
+
+	/*
+	 * if the sensor is already streaming, write to shadow registers,
+	 * if the sensor is in SW standby, write to active registers,
+	 * if the sensor is off/registers are not writeable, do nothing
+	 */
+	if ((cam_mod->state == OV_CAMERA_MODULE_SW_STANDBY) ||
+		(cam_mod->state == OV_CAMERA_MODULE_STREAMING)) {
+		u32 a_gain = cam_mod->exp_config.gain;
+		u32 exp_time;
+
+		a_gain = a_gain > 0x7ff ? 0x7ff : a_gain;
+		a_gain = a_gain * cam_mod->exp_config.gain_percent / 100;
+		exp_time = cam_mod->exp_config.exp_time << 4;
+
+		mutex_lock(&cam_mod->lock);
+		if (cam_mod->state == OV_CAMERA_MODULE_STREAMING)
+			ret = ov_camera_module_write_reg(cam_mod,
+				ov7750_AEC_GROUP_UPDATE_ADDRESS,
+				ov7750_AEC_GROUP_UPDATE_START_DATA);
+		if (!IS_ERR_VALUE(ret) && cam_mod->auto_adjust_fps)
+			ret = ov7750_auto_adjust_fps(cam_mod,
+						cam_mod->exp_config.exp_time);
+		ret |= ov_camera_module_write_reg(cam_mod,
+			ov7750_AEC_PK_LONG_GAIN_HIGH_REG,
+			ov7750_FETCH_MSB_GAIN(a_gain));
+		ret |= ov_camera_module_write_reg(cam_mod,
+			ov7750_AEC_PK_LONG_GAIN_LOW_REG,
+			ov7750_FETCH_LSB_GAIN(a_gain));
+		ret = ov_camera_module_write_reg(cam_mod,
+			ov7750_AEC_PK_LONG_EXPO_3RD_REG,
+			ov7750_FETCH_3RD_BYTE_EXP(exp_time));
+		ret |= ov_camera_module_write_reg(cam_mod,
+			ov7750_AEC_PK_LONG_EXPO_2ND_REG,
+			ov7750_FETCH_2ND_BYTE_EXP(exp_time));
+		ret |= ov_camera_module_write_reg(cam_mod,
+			ov7750_AEC_PK_LONG_EXPO_1ST_REG,
+			ov7750_FETCH_1ST_BYTE_EXP(exp_time));
+		if (!cam_mod->auto_adjust_fps)
+			ret |= ov7750_set_vts(cam_mod, cam_mod->exp_config.vts_value);
+		if (cam_mod->state == OV_CAMERA_MODULE_STREAMING) {
+			ret = ov_camera_module_write_reg(cam_mod,
+				ov7750_AEC_GROUP_UPDATE_ADDRESS,
+				ov7750_AEC_GROUP_UPDATE_END_DATA);
+			ret = ov_camera_module_write_reg(cam_mod,
+				ov7750_AEC_GROUP_UPDATE_ADDRESS,
+				ov7750_AEC_GROUP_UPDATE_END_LAUNCH);
+		}
+		mutex_unlock(&cam_mod->lock);
+	}
+
+	if (IS_ERR_VALUE(ret))
+		ov_camera_module_pr_err(cam_mod,
 			"failed with error (%d)\n", ret);
 	return ret;
 }
@@ -464,6 +589,7 @@ static int ov7750_g_timings(struct ov_camera_module *cam_mod,
 		cam_mod->active_config->frm_intrvl.interval.denominator *
 		vts * timings->line_length_pck;
 
+	timings->frame_length_lines = vts;
 	return ret;
 err:
 	ov_camera_module_pr_err(cam_mod,
@@ -500,6 +626,12 @@ static int ov7750_s_ext_ctrls(struct ov_camera_module *cam_mod,
 {
 	int ret = 0;
 
+	if ((ctrls->ctrls[0].id == V4L2_CID_GAIN ||
+		ctrls->ctrls[0].id == V4L2_CID_EXPOSURE))
+		ret = ov7750_write_aec(cam_mod);
+	else
+		ret = -EINVAL;
+
 	if (IS_ERR_VALUE(ret))
 		ov_camera_module_pr_debug(cam_mod,
 			"failed with error (%d)\n", ret);
@@ -517,12 +649,10 @@ static int ov7750_start_streaming(struct ov_camera_module *cam_mod)
 	if (IS_ERR_VALUE(ret))
 		goto err;
 
-	ret = ov_camera_module_write_reg(cam_mod, 0x4800, 0x04);
+	mutex_lock(&cam_mod->lock);
+	ret = ov_camera_module_write_reg(cam_mod, 0x0100, 1);
+	mutex_unlock(&cam_mod->lock);
 	if (IS_ERR_VALUE(ret))
-		goto err;
-
-
-	if (IS_ERR_VALUE(ov_camera_module_write_reg(cam_mod, 0x0100, 1)))
 		goto err;
 
 	msleep(25);
@@ -540,12 +670,9 @@ static int ov7750_stop_streaming(struct ov_camera_module *cam_mod)
 
 	ov_camera_module_pr_debug(cam_mod, "\n");
 
-	ret = ov_camera_module_write_reg(cam_mod, 0x4800, 0x25);
-	if (IS_ERR_VALUE(ret))
-		goto err;
-	
-
+	mutex_lock(&cam_mod->lock);
 	ret = ov_camera_module_write_reg(cam_mod, 0x0100, 0);
+	mutex_unlock(&cam_mod->lock);
 	if (IS_ERR_VALUE(ret))
 		goto err;
 
@@ -604,6 +731,7 @@ static struct v4l2_subdev_core_ops ov7750_camera_module_core_ops = {
 
 static struct v4l2_subdev_video_ops ov7750_camera_module_video_ops = {
 	.s_frame_interval = ov_camera_module_s_frame_interval,
+	.g_frame_interval = ov_camera_module_g_frame_interval,
 	.s_stream = ov_camera_module_s_stream
 };
 
@@ -627,9 +755,17 @@ static struct ov_camera_module_custom_config ov7750_custom_config = {
 	.g_ctrl = ov7750_g_ctrl,
 	.g_timings = ov7750_g_timings,
 	.check_camera_id = ov7750_check_camera_id,
+	.s_vts = ov7750_auto_adjust_fps,
+	.set_flip = ov7750_set_flip,
 	.configs = ov7750_configs,
 	.num_configs = ARRAY_SIZE(ov7750_configs),
-	.power_up_delays_ms = {5, 20, 0}
+	.power_up_delays_ms = {5, 20, 0},
+	/*
+	*0: Exposure time valid fileds;
+	*1: Exposure gain valid fileds;
+	*(2 fileds == 1 frames)
+	*/
+	.exposure_valid_frame = {4, 4}
 };
 
 static int ov7750_probe(
@@ -640,9 +776,10 @@ static int ov7750_probe(
 
 	ov7750_filltimings(&ov7750_custom_config);
 	v4l2_i2c_subdev_init(&ov7750.sd, client, &ov7750_camera_module_ops);
-
+	ov7750.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ov7750.custom = ov7750_custom_config;
 
+	mutex_init(&ov7750.lock);
 	dev_info(&client->dev, "probing successful\n");
 	return 0;
 }
@@ -656,6 +793,7 @@ static int ov7750_remove(struct i2c_client *client)
 	if (!client->adapter)
 		return -ENODEV;	/* our client isn't attached */
 
+	mutex_destroy(&cam_mod->lock);
 	ov_camera_module_release(cam_mod);
 
 	dev_info(&client->dev, "removed\n");
